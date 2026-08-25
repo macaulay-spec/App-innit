@@ -53,9 +53,13 @@ function open(target: URL, headers: Record<string, string>): Promise<http.Incomi
   return new Promise((resolve, reject) => {
     const r = mod.request(
       target,
-      { agent: target.protocol === "http:" ? httpAgent : httpsAgent, headers },
+      { agent: target.protocol === "http:" ? httpAgent : httpsAgent, headers, timeout: 6000 },
       (res) => resolve(res),
     );
+    // fail fast: a blackholed CDN connection must not stall the ladder
+    r.on("timeout", () => {
+      r.destroy(new Error("upstream timeout"));
+    });
     r.on("error", reject);
     r.end();
   });

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import type { Caption, PlaybackSource } from "../lib/types";
-import { PROXY } from "../lib/api";
+import { PROXY, PROXY_DOWNLOAD } from "../lib/api";
 import { formatClock } from "../lib/format";
 import { cn } from "../lib/cn";
 import {
@@ -103,9 +103,22 @@ export function Player({
   const lastSave = useRef(0);
   const cueCache = useRef<Map<string, Cue[]>>(new Map());
   const cycles = useRef(0);
+  const attempts = useRef<string[]>([]);
+  const loadTimer = useRef<number>(0);
+  const [copied, setCopied] = useState(false);
 
   const source = sources[si];
   const url = source ? (source.candidates[ci] ?? source.streamUrl) : "";
+
+  const laneLabel = (u: string) => {
+    if (u.startsWith("/api/relay")) {
+      const m = u.match(/hs=([^&]+)/);
+      return `relay:${m?.[1] ?? "web"}`;
+    }
+    if (u.startsWith(PROXY_DOWNLOAD)) return "zst-download";
+    if (u.startsWith(PROXY)) return "zst-proxy";
+    return "direct-cdn";
+  };
 
   /* ------------------------------ controls hide ------------------------------ */
   const poke = useCallback(() => {
@@ -142,6 +155,10 @@ export function Player({
 
   const advance = useCallback(
     (reason: string) => {
+      const curUrl = sources[si]?.candidates[ci] ?? "";
+      if (curUrl) {
+        attempts.current.push(`${laneLabel(curUrl)} [${sources[si].resolution}p] -> ${reason}`);
+      }
       rememberPosition();
       setFailed(false);
       const cur = sources[si];
@@ -159,6 +176,7 @@ export function Player({
       }
       if (cycles.current < 2) {
         cycles.current += 1;
+        attempts.current.push(`--- cycle ${cycles.current + 1}: refreshing signed links ---`);
         const wait = cycles.current * 3;
         flash(`Sources busy — fetching fresh links, retry in ${wait}s`);
         onRefreshMedia?.();
@@ -174,44 +192,17 @@ export function Player({
     [sources, si, ci, flash, onRefreshMedia],
   );
 
-  /* Preflight: probe the relay and proxy lanes in parallel; start on the
-     first healthy one, else fall through to the direct-CDN lane. */
+  /* Connect watchdog: a candidate that neither loads metadata nor errors
+     within 10s is dead — climb on instead of hanging. */
   useEffect(() => {
-    let dead = false;
-    const first = sources[0];
-    if (!first || first.candidates.length < 2) return;
-    const relayIdx = first.candidates.findIndex((u) => u.startsWith("/api/relay"));
-    const proxyIdx = first.candidates.findIndex((u) => u.startsWith(PROXY));
-    const probe = (i: number) => {
-      const u = first.candidates[i];
-      // relay answers tiny ranged GETs; others get HEAD
-      const init = u.startsWith("/api/relay")
-        ? { headers: { range: "bytes=0-1" } }
-        : { method: "HEAD" as const };
-      return fetch(u, init)
-        .then((r) => [i, r.ok || r.status === 206] as [number, boolean])
-        .catch(() => [i, false] as [number, boolean]);
-    };
-    const checks: Promise<[number, boolean]>[] = [];
-    if (relayIdx >= 0) checks.push(probe(relayIdx));
-    if (proxyIdx >= 0) checks.push(probe(proxyIdx));
-    if (!checks.length) return;
-    Promise.all(checks).then((pairs) => {
-      if (dead) return;
-      const good = pairs.filter((p) => p[1]).map((p) => p[0]).sort((a, b) => a - b)[0];
-      // healthy lane found -> skip straight to it; otherwise start at 0 so
-      // the ladder tries EVERY candidate in order (nothing gets skipped)
-      if (good !== undefined && good > 0) {
-        rememberPosition();
-        setCi(good);
-        flash("Starting on healthy lane");
-      }
-    });
-    return () => {
-      dead = true;
-    };
+    window.clearTimeout(loadTimer.current);
+    loadTimer.current = window.setTimeout(() => {
+      const v = videoRef.current;
+      if (v && v.readyState < 1) advance("No response");
+    }, 10000);
+    return () => window.clearTimeout(loadTimer.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sources]);
+  }, [url]);
 
   /* ------------------------------ video wiring ------------------------------ */
   useEffect(() => {
@@ -222,6 +213,7 @@ export function Player({
   }, [volume, muted, url]);
 
   const onLoadedMeta = () => {
+    window.clearTimeout(loadTimer.current);
     const v = videoRef.current!;
     setDuration(v.duration || 0);
     if (pendingSeek.current != null) {
@@ -265,7 +257,9 @@ export function Player({
   };
   const onPlaying = () => {
     window.clearTimeout(stallTimer.current);
+    window.clearTimeout(loadTimer.current);
     cycles.current = 0;
+    attempts.current = [];
     setPlaying(true);
     poke();
   };
@@ -506,19 +500,44 @@ export function Player({
       </AnimatePresence>
 
       {failed && (
-        <div className="absolute inset-0 grid place-items-center bg-black/80">
-          <div className="text-center">
+        <div className="absolute inset-0 grid place-items-center overflow-y-auto bg-black/85">
+          <div className="w-full max-w-md px-6 text-center">
             <p className="font-serif text-xl text-ink">Playback failed</p>
-            <p className="mt-1 max-w-sm text-sm text-ink-dim">
-              Every link and mirror is throttled right now. The upstream CDN signs fresh URLs every
-              few minutes — retry usually recovers playback.
+            <p className="mt-1 text-sm text-ink-dim">
+              Every lane was tried. The CDN re-signs URLs every few minutes — retry often recovers.
             </p>
-            <button
-              onClick={retryAll}
-              className="bg-accent-gradient mt-4 cursor-pointer rounded-xl px-6 py-2.5 font-display text-sm font-semibold text-white"
-            >
-              Retry with fresh links
-            </button>
+            {attempts.current.length > 0 && (
+              <pre className="mt-4 max-h-40 overflow-y-auto rounded-xl bg-black/50 p-3 text-left text-[11px] leading-relaxed text-ink-dim">
+                {attempts.current.join("\n")}
+              </pre>
+            )}
+            <div className="mt-4 flex items-center justify-center gap-2">
+              <button
+                onClick={retryAll}
+                className="bg-accent-gradient cursor-pointer rounded-xl px-6 py-2.5 font-display text-sm font-semibold text-white"
+              >
+                Retry with fresh links
+              </button>
+              <button
+                onClick={() => {
+                  const report = [
+                    `Jagflix playback report ${new Date().toISOString()}`,
+                    `title: ${title} ${episodeLabel ?? ""}`,
+                    ...attempts.current,
+                  ].join("\n");
+                  navigator.clipboard
+                    ?.writeText(report)
+                    .then(() => {
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 2000);
+                    })
+                    .catch(() => undefined);
+                }}
+                className="cursor-pointer rounded-xl border border-hairline-strong px-5 py-2.5 font-display text-sm font-semibold text-ink-dim hover:text-ink"
+              >
+                {copied ? "Copied ✓ — paste it in chat" : "Copy report"}
+              </button>
+            </div>
           </div>
         </div>
       )}

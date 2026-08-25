@@ -364,11 +364,12 @@ export async function getMedia(opts: {
             toRelay(b.raw[0], "exo"),
           ]
         : [];
-      // proxy-download is a proven lane; relay leads with spoofed identity.
+      // proxy-download is the PROVEN lane in real browsers (media elements
+      // don't need CORS), so it LEADS; speculative relays come after.
       const pdl = b.downloadUrl ?? (b.raw[0] ? toDownload(b.raw[0], title, `${b.resolution}p`) : "");
       const candidates = dedupe([
-        ...relays,
         ...(pdl ? [pdl] : []),
+        ...relays,
         ...b.proxied,
         ...proxiedRaws,
         ...directAlts,
