@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import type { Caption, PlaybackSource } from "../lib/types";
+import { PROXY } from "../lib/api";
 import { formatClock } from "../lib/format";
 import { cn } from "../lib/cn";
 import {
@@ -54,6 +55,8 @@ export interface PlayerProps {
   onEnded?: () => void;
   onNext?: () => void;
   onBack: () => void;
+  /** Refetch /api/media for fresh signed URLs while retrying. */
+  onRefreshMedia?: () => void;
 }
 
 export function Player({
@@ -66,12 +69,14 @@ export function Player({
   onEnded,
   onNext,
   onBack,
+  onRefreshMedia,
 }: PlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
 
-  const [idx, setIdx] = useState(0);
+  const [si, setSi] = useState(0); // resolution index
+  const [ci, setCi] = useState(0); // candidate index within resolution
   const [playing, setPlaying] = useState(false);
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -97,8 +102,10 @@ export function Player({
   const lastTap = useRef<{ t: number; x: number }>({ t: 0, x: 0 });
   const lastSave = useRef(0);
   const cueCache = useRef<Map<string, Cue[]>>(new Map());
+  const cycles = useRef(0);
 
-  const source = sources[idx];
+  const source = sources[si];
+  const url = source ? (source.candidates[ci] ?? source.streamUrl) : "";
 
   /* ------------------------------ controls hide ------------------------------ */
   const poke = useCallback(() => {
@@ -117,45 +124,90 @@ export function Player({
     return () => window.clearTimeout(hideTimer.current);
   }, [poke, playing]);
 
-  /* --------------------------------- toast ---------------------------------- */
   const flash = useCallback((msg: string) => {
     setToast(msg);
     window.setTimeout(() => setToast(""), 2600);
   }, []);
 
-  /* --------------------------- quality ladder on failure --------------------------- */
-  const stepDown = useCallback(
+  /* ------------------------- the resilience ladder -------------------------
+     candidate -> next candidate -> next resolution -> fresh-link retry cycle
+     (with backoff + media refetch) -> give up with manual retry.          */
+  const rememberPosition = () => {
+    const v = videoRef.current;
+    if (v) {
+      pendingSeek.current = v.currentTime;
+      pendingPlay.current = !v.paused;
+    }
+  };
+
+  const advance = useCallback(
     (reason: string) => {
-      setIdx((cur) => {
-        const next = sources.findIndex((s, i) => i > cur);
-        if (next === -1) {
-          setFailed(true);
-          return cur;
-        }
-        const v = videoRef.current;
-        if (v) {
-          pendingSeek.current = v.currentTime;
-          pendingPlay.current = !v.paused;
-        }
-        flash(`${reason} — switching to ${sources[next].resolution}p`);
-        return next;
-      });
+      rememberPosition();
+      setFailed(false);
+      const cur = sources[si];
+      if (cur && ci + 1 < cur.candidates.length) {
+        const nextDirect = !cur.candidates[ci + 1].startsWith(PROXY);
+        setCi(ci + 1);
+        flash(`${reason} — trying ${nextDirect ? "direct CDN" : "mirror link"} · ${cur.resolution}p`);
+        return;
+      }
+      if (si + 1 < sources.length) {
+        setSi(si + 1);
+        setCi(0);
+        flash(`${reason} — switching to ${sources[si + 1].resolution}p`);
+        return;
+      }
+      if (cycles.current < 2) {
+        cycles.current += 1;
+        const wait = cycles.current * 3;
+        flash(`Sources busy — fetching fresh links, retry in ${wait}s`);
+        onRefreshMedia?.();
+        window.setTimeout(() => {
+          setSi(0);
+          setCi(0);
+          setFailed(false);
+        }, wait * 1000);
+        return;
+      }
+      setFailed(true);
     },
-    [sources, flash],
+    [sources, si, ci, flash, onRefreshMedia],
   );
 
-  /* ------------------------------ video element wiring ------------------------------ */
+  /* Preflight: if the primary proxied link is already throttled (426),
+     jump straight to the first direct-CDN candidate. */
+  useEffect(() => {
+    let dead = false;
+    const first = sources[0];
+    if (!first || first.candidates.length < 2) return;
+    fetch(first.candidates[0], { method: "HEAD" })
+      .then((r) => {
+        if (dead || r.ok) return;
+        const directIdx = first.candidates.findIndex((u) => !u.startsWith(PROXY));
+        if (directIdx > 0) {
+          rememberPosition();
+          setCi(directIdx);
+          flash("Proxy busy — starting on direct CDN");
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      dead = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sources]);
+
+  /* ------------------------------ video wiring ------------------------------ */
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
     v.volume = volume;
     v.muted = muted;
-  }, [volume, muted, idx]);
+  }, [volume, muted, url]);
 
   const onLoadedMeta = () => {
     const v = videoRef.current!;
     setDuration(v.duration || 0);
-    setFailed(false);
     if (pendingSeek.current != null) {
       v.currentTime = pendingSeek.current;
       pendingSeek.current = null;
@@ -191,25 +243,24 @@ export function Player({
     }
   };
 
-  /* stall watchdog */
   const onWaiting = () => {
     window.clearTimeout(stallTimer.current);
-    stallTimer.current = window.setTimeout(() => stepDown("Stream stalled"), 8000);
+    stallTimer.current = window.setTimeout(() => advance("Stream stalled"), 8000);
   };
   const onPlaying = () => {
     window.clearTimeout(stallTimer.current);
+    cycles.current = 0;
     setPlaying(true);
     poke();
   };
 
-  /* ------------------------------- captions fetch ------------------------------- */
+  /* ------------------------------- captions ------------------------------- */
   const activeCaption = captions.find((c) => c.lang === ccLang) ?? captions[0];
   useEffect(() => {
     setCue("");
     if (!ccOn || !activeCaption) return;
     let dead = false;
-    const cached = cueCache.current.get(activeCaption.lang);
-    if (cached) return;
+    if (cueCache.current.has(activeCaption.lang)) return;
     fetch(activeCaption.url)
       .then((r) => (r.ok ? r.text() : ""))
       .then((txt) => {
@@ -220,6 +271,7 @@ export function Player({
     return () => {
       dead = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ccOn, activeCaption?.lang, activeCaption?.url]);
 
   useEffect(() => {
@@ -232,7 +284,7 @@ export function Player({
     setCue(c?.text ?? "");
   }, [current, ccOn, activeCaption]);
 
-  /* --------------------------------- shortcuts --------------------------------- */
+  /* -------------------------------- shortcuts -------------------------------- */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
@@ -342,15 +394,21 @@ export function Player({
   };
 
   const switchQuality = (i: number) => {
-    if (i === idx) return;
-    const v = videoRef.current;
-    if (v) {
-      pendingSeek.current = v.currentTime;
-      pendingPlay.current = !v.paused;
-    }
-    setIdx(i);
+    if (i === si) return;
+    rememberPosition();
+    cycles.current = 0;
+    setSi(i);
+    setCi(0);
     setMenu(null);
     flash(`Quality · ${sources[i].resolution}p`);
+  };
+
+  const retryAll = () => {
+    cycles.current = 0;
+    setFailed(false);
+    setSi(0);
+    setCi(0);
+    onRefreshMedia?.();
   };
 
   const progressPct = duration ? (current / duration) * 100 : 0;
@@ -361,7 +419,7 @@ export function Player({
     return r >= 1080 ? "Full HD" : r >= 720 ? "HD" : "SD";
   }, [source]);
 
-  if (!source) {
+  if (!source || !url) {
     return (
       <div className="grid aspect-video w-full place-items-center bg-black">
         <p className="text-sm text-ink-dim">No playable source for this selection.</p>
@@ -378,9 +436,9 @@ export function Player({
       onClick={onTap}
     >
       <video
-        key={source.streamUrl}
+        key={url}
         ref={videoRef}
-        src={source.streamUrl}
+        src={url}
         className="h-full w-full"
         playsInline
         autoPlay
@@ -394,7 +452,7 @@ export function Player({
           onProgress?.(videoRef.current?.duration ?? 0, videoRef.current?.duration ?? 0);
           onEnded?.();
         }}
-        onError={() => stepDown("Source busy")}
+        onError={() => advance("Source busy")}
       />
 
       {/* ripple */}
@@ -435,16 +493,15 @@ export function Player({
         <div className="absolute inset-0 grid place-items-center bg-black/80">
           <div className="text-center">
             <p className="font-serif text-xl text-ink">Playback failed</p>
-            <p className="mt-1 text-sm text-ink-dim">All qualities exhausted. The upstream CDN may be throttling.</p>
+            <p className="mt-1 max-w-sm text-sm text-ink-dim">
+              Every link and mirror is throttled right now. The upstream CDN signs fresh URLs every
+              few minutes — retry usually recovers playback.
+            </p>
             <button
-              onClick={() => {
-                setFailed(false);
-                setIdx(0);
-                videoRef.current?.load();
-              }}
+              onClick={retryAll}
               className="bg-accent-gradient mt-4 cursor-pointer rounded-xl px-6 py-2.5 font-display text-sm font-semibold text-white"
             >
-              Retry
+              Retry with fresh links
             </button>
           </div>
         </div>
@@ -622,7 +679,7 @@ export function Player({
                           onClick={() => switchQuality(i)}
                           className={cn(
                             "flex w-full cursor-pointer items-center justify-between rounded-lg px-3 py-2 text-left font-display text-xs transition-colors",
-                            i === idx ? "bg-cyan/10 text-cyan" : "text-ink-dim hover:bg-canvas-raise hover:text-ink",
+                            i === si ? "bg-cyan/10 text-cyan" : "text-ink-dim hover:bg-canvas-raise hover:text-ink",
                           )}
                         >
                           <span>
@@ -631,7 +688,7 @@ export function Player({
                               {s.resolution >= 1080 ? "Full HD" : s.resolution >= 720 ? "HD" : "SD"}
                             </span>
                           </span>
-                          {i === idx && <ICheck width={14} height={14} />}
+                          {i === si && <ICheck width={14} height={14} />}
                         </button>
                       ))}
                     </motion.div>

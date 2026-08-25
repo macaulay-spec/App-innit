@@ -55,6 +55,8 @@ export interface PlaybackSource {
   id: string;
   resolution: number;
   sizeBytes?: number;
+  /** Ordered ladder of playable URLs for this resolution. */
+  candidates: string[];
   streamUrl: string;
   downloadUrl: string;
   format: string;

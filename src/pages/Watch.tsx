@@ -150,6 +150,7 @@ export function WatchPage() {
                 kind: isSeries ? "TV_SERIES" : "MOVIE",
               });
             }}
+            onRefreshMedia={() => media.refetch()}
             onNext={
               nextEp
                 ? () => navigate(`/watch/${subjectId}?season=${season}&episode=${nextEp}`)

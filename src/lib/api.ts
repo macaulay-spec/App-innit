@@ -248,9 +248,12 @@ export async function getRecommendations(subjectId: string): Promise<MediaItem[]
 
 /**
  * The media normalizer — heart of the app.
- * Merges downloads[] (pre-built proxied urls, numeric resolution) with
- * stream.streams[] (raw urls only, string resolutions), dedupes by
- * resolution, sorts descending, and wraps every raw url through the proxy.
+ * Merges downloads[] (pre-built proxied urls, numeric resolution), the
+ * subtitles-section mirror (same shape, different signatures) and
+ * stream.streams[] (raw urls only, string resolutions). Dedupes by
+ * resolution, sorts descending, and builds an ordered candidate ladder
+ * per resolution: proxied primary -> proxied mirrors -> proxied raws ->
+ * direct raw CDN (real-browser attempt) -> alternate-host variants.
  */
 export async function getMedia(opts: {
   subjectId: string;
@@ -267,51 +270,109 @@ export async function getMedia(opts: {
   });
   const data = json?.data ?? {};
   const dlData = data?.downloads?.data ?? {};
+  const mirrorData = data?.subtitles?.data ?? {};
   const stData = data?.stream?.data ?? {};
   const title = opts.title ?? "video";
 
-  const byRes = new Map<number, PlaybackSource>();
+  interface Bucket {
+    id: string;
+    resolution: number;
+    sizeBytes?: number;
+    format: string;
+    codec?: string;
+    durationSec?: number;
+    downloadUrl?: string;
+    proxied: string[];
+    raw: string[];
+  }
+  const buckets = new Map<number, Bucket>();
+  const bucket = (res: number, id: string): Bucket => {
+    let b = buckets.get(res);
+    if (!b) {
+      b = { id, resolution: res, format: "MP4", proxied: [], raw: [] };
+      buckets.set(res, b);
+    }
+    return b;
+  };
+
+  const ALT_HOSTS = [
+    "bcdnw.hakunaymatata.com",
+    "valiw.hakunaymatata.com",
+    "vacdn.hakunaymatata.com",
+    "vgorigin.hakunaymatata.com",
+  ];
+  const altHostVariants = (raw: string): string[] => {
+    try {
+      const u = new URL(raw);
+      return ALT_HOSTS.filter((h) => h !== u.host).map((h) => `${u.protocol}//${h}${u.pathname}${u.search}`);
+    } catch {
+      return [];
+    }
+  };
 
   for (const d of dlData.downloads ?? []) {
     const res = Number(d?.resolution) || 0;
     if (!d?.url && !d?.streamUrl) continue;
-    byRes.set(res, {
-      id: String(d?.id ?? res),
-      resolution: res,
-      sizeBytes: d?.size ? Number(d.size) : undefined,
-      streamUrl: d?.streamUrl ? String(d.streamUrl) : toStream(String(d.url)),
-      downloadUrl: d?.downloadUrl
-        ? String(d.downloadUrl)
-        : toDownload(String(d.url), title, `${res}p`),
-      format: "MP4",
-    });
+    const b = bucket(res, String(d?.id ?? res));
+    if (d.streamUrl) b.proxied.push(String(d.streamUrl));
+    if (d.url) b.raw.push(String(d.url));
+    b.downloadUrl = d?.downloadUrl
+      ? String(d.downloadUrl)
+      : d?.url
+        ? toDownload(String(d.url), title, `${res}p`)
+        : b.downloadUrl;
+    b.sizeBytes = b.sizeBytes ?? (d?.size ? Number(d.size) : undefined);
+  }
+
+  // mirror section: same content, different signatures
+  for (const d of mirrorData.downloads ?? []) {
+    const res = Number(d?.resolution) || 0;
+    if (!d?.url) continue;
+    const b = bucket(res, String(d?.id ?? res));
+    b.raw.push(String(d.url));
+    b.downloadUrl = b.downloadUrl ?? toDownload(String(d.url), title, `${res}p`);
+    b.sizeBytes = b.sizeBytes ?? (d?.size ? Number(d.size) : undefined);
   }
 
   for (const s of stData.streams ?? []) {
     const res = Number(s?.resolutions) || 0;
     if (!s?.url) continue;
-    const existing = byRes.get(res);
-    if (existing) {
-      existing.durationSec = Number(s?.duration) || existing.durationSec;
-      existing.codec = s?.codecName ?? existing.codec;
-      existing.sizeBytes = existing.sizeBytes ?? (s?.size ? Number(s.size) : undefined);
-    } else {
-      byRes.set(res, {
-        id: String(s?.id ?? res),
-        resolution: res,
-        sizeBytes: s?.size ? Number(s.size) : undefined,
-        streamUrl: toStream(String(s.url)),
-        downloadUrl: toDownload(String(s.url), title, `${res}p`),
-        format: s?.format ?? "MP4",
-        codec: s?.codecName,
-        durationSec: Number(s?.duration) || undefined,
-      });
-    }
+    const b = bucket(res, String(s?.id ?? res));
+    b.raw.push(String(s.url));
+    b.durationSec = Number(s?.duration) || b.durationSec;
+    b.codec = s?.codecName ?? b.codec;
+    b.format = s?.format ?? b.format;
+    b.sizeBytes = b.sizeBytes ?? (s?.size ? Number(s.size) : undefined);
+    b.downloadUrl = b.downloadUrl ?? toDownload(String(s.url), title, `${res}p`);
   }
 
-  const sources = [...byRes.values()].sort((a, b) => b.resolution - a.resolution);
+  const sources: PlaybackSource[] = [...buckets.values()]
+    .map((b) => {
+      const proxiedRaws = b.raw.map((r) => toStream(r));
+      const directAlts = b.raw.flatMap((r) => [r, ...altHostVariants(r)]);
+      const proxiedAlts = directAlts.map((r) => toStream(r));
+      const candidates = dedupe([
+        ...b.proxied,
+        ...proxiedRaws,
+        ...directAlts,
+        ...proxiedAlts,
+      ]).slice(0, 10);
+      return {
+        id: b.id,
+        resolution: b.resolution,
+        sizeBytes: b.sizeBytes,
+        format: b.format,
+        codec: b.codec,
+        durationSec: b.durationSec,
+        candidates,
+        streamUrl: candidates[0] ?? "",
+        downloadUrl: b.downloadUrl ?? (b.raw[0] ? toDownload(b.raw[0], title, `${b.resolution}p`) : ""),
+      };
+    })
+    .filter((s) => s.candidates.length > 0)
+    .sort((a, b) => b.resolution - a.resolution);
 
-  const rawCaptions = dlData.captions?.length ? dlData.captions : (data?.subtitles?.data?.captions ?? []);
+  const rawCaptions = dlData.captions?.length ? dlData.captions : (mirrorData.captions ?? []);
   const captions: Caption[] = (rawCaptions ?? [])
     .filter((c: any) => c?.url)
     .map((c: any) => ({
@@ -324,4 +385,9 @@ export async function getMedia(opts: {
     (dlData.hasResource === true || stData.hasResource === true) && sources.length > 0;
 
   return { sources, captions, hasResource };
+}
+
+function dedupe(list: string[]): string[] {
+  const seen = new Set<string>();
+  return list.filter((x) => (seen.has(x) ? false : (seen.add(x), true)));
 }
