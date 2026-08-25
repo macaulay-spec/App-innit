@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { getItemDetails, getMedia } from "../lib/api";
+import { getItemDetails, getMedia, toRelay } from "../lib/api";
 import { getResume, saveProgress } from "../lib/store";
 import { startManagedDownload } from "../lib/downloader";
 import { getBlob } from "../lib/files";
@@ -69,8 +69,13 @@ export function WatchPage() {
   const startDownload = (i: number) => {
     const src = media.data?.sources[i];
     if (!src) return;
-    // in-app managed download: streams through the proven lane, saves to
-    // IndexedDB, tracks progress on the Downloads page. No new tabs.
+    // in-app managed download via OUR relay (same origin, mode=download):
+    // progress on the Downloads page, saved to IndexedDB. No new tabs.
+    const dlUrl = src.rawUrl
+      ? `${toRelay(src.rawUrl, "web")}&mode=download&name=${encodeURIComponent(
+          (isSeries ? `${title}_S${season}E${episode}` : title) || "jagflix",
+        )}`
+      : src.downloadUrl;
     startManagedDownload({
       id: `${subjectId}-${season}-${episode}-${src.resolution}`,
       title: isSeries ? `${title} S${season}E${episode}` : title,
@@ -78,7 +83,7 @@ export function WatchPage() {
       quality: `${src.resolution}p`,
       sizeBytes: src.sizeBytes,
       streamUrl: src.streamUrl,
-      downloadUrl: src.downloadUrl,
+      downloadUrl: dlUrl,
       subjectId,
       season: isSeries ? season : undefined,
       episode: isSeries ? episode : undefined,

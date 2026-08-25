@@ -59,6 +59,8 @@ export interface PlaybackSource {
   candidates: string[];
   streamUrl: string;
   downloadUrl: string;
+  /** Raw signed CDN url (server-side relay input only). */
+  rawUrl?: string;
   format: string;
   codec?: string;
   durationSec?: number;

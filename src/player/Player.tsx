@@ -185,10 +185,16 @@ export function Player({
     const directIdx = first.candidates.findIndex(
       (u) => !u.startsWith(PROXY) && !u.startsWith("/api/relay"),
     );
-    const probe = (i: number) =>
-      fetch(first.candidates[i], { method: "HEAD" })
-        .then((r) => [i, r.ok] as [number, boolean])
+    const probe = (i: number) => {
+      const u = first.candidates[i];
+      // relay answers tiny ranged GETs; others get HEAD
+      const init = u.startsWith("/api/relay")
+        ? { headers: { range: "bytes=0-1" } }
+        : { method: "HEAD" as const };
+      return fetch(u, init)
+        .then((r) => [i, r.ok || r.status === 206] as [number, boolean])
         .catch(() => [i, false] as [number, boolean]);
+    };
     const checks: Promise<[number, boolean]>[] = [];
     if (relayIdx >= 0) checks.push(probe(relayIdx));
     if (proxyIdx >= 0) checks.push(probe(proxyIdx));

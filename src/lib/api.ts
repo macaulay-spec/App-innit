@@ -357,14 +357,18 @@ export async function getMedia(opts: {
       const directAlts = b.raw.flatMap((r) => [r, ...altHostVariants(r)]);
       const proxiedAlts = directAlts.map((r) => toStream(r));
       const relays = b.raw.length
-        ? [toRelay(b.raw[0], "app"), toRelay(b.raw[0], "okhttp"), toRelay(b.raw[0], "exo")]
+        ? [
+            toRelay(b.raw[0], "web"),
+            toRelay(b.raw[0], "app"),
+            toRelay(b.raw[0], "okhttp"),
+            toRelay(b.raw[0], "exo"),
+          ]
         : [];
-      // proxy-download is the PROVEN lane (delivers bytes reliably; the
-      // attachment header is ignored by <video>), so it leads the ladder.
+      // proxy-download is a proven lane; relay leads with spoofed identity.
       const pdl = b.downloadUrl ?? (b.raw[0] ? toDownload(b.raw[0], title, `${b.resolution}p`) : "");
       const candidates = dedupe([
-        ...(pdl ? [pdl] : []),
         ...relays,
+        ...(pdl ? [pdl] : []),
         ...b.proxied,
         ...proxiedRaws,
         ...directAlts,
@@ -378,6 +382,7 @@ export async function getMedia(opts: {
         codec: b.codec,
         durationSec: b.durationSec,
         candidates,
+        rawUrl: b.raw[0],
         streamUrl: candidates[0] ?? "",
         downloadUrl: b.downloadUrl ?? (b.raw[0] ? toDownload(b.raw[0], title, `${b.resolution}p`) : ""),
       };
