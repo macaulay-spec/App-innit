@@ -32,6 +32,11 @@ export const toStream = (raw: string) => `${PROXY}?url=${encodeURIComponent(raw)
 export const toDownload = (raw: string, name: string, quality: string) =>
   `${PROXY_DOWNLOAD}?url=${encodeURIComponent(raw)}&name=${encodeURIComponent(name)}&quality=${encodeURIComponent(quality)}`;
 
+/** Same-origin relay (Vercel serverless) that talks to the CDN with an
+    official-app identity. Falls through harmlessly where not deployed. */
+export const toRelay = (raw: string, hs: string) =>
+  `/api/relay?url=${encodeURIComponent(raw)}&hs=${hs}`;
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -351,12 +356,16 @@ export async function getMedia(opts: {
       const proxiedRaws = b.raw.map((r) => toStream(r));
       const directAlts = b.raw.flatMap((r) => [r, ...altHostVariants(r)]);
       const proxiedAlts = directAlts.map((r) => toStream(r));
+      const relays = b.raw.length
+        ? [toRelay(b.raw[0], "app"), toRelay(b.raw[0], "okhttp"), toRelay(b.raw[0], "exo")]
+        : [];
       const candidates = dedupe([
+        ...relays,
         ...b.proxied,
         ...proxiedRaws,
         ...directAlts,
         ...proxiedAlts,
-      ]).slice(0, 10);
+      ]).slice(0, 12);
       return {
         id: b.id,
         resolution: b.resolution,

@@ -174,23 +174,35 @@ export function Player({
     [sources, si, ci, flash, onRefreshMedia],
   );
 
-  /* Preflight: if the primary proxied link is already throttled (426),
-     jump straight to the first direct-CDN candidate. */
+  /* Preflight: probe the relay and proxy lanes in parallel; start on the
+     first healthy one, else fall through to the direct-CDN lane. */
   useEffect(() => {
     let dead = false;
     const first = sources[0];
     if (!first || first.candidates.length < 2) return;
-    fetch(first.candidates[0], { method: "HEAD" })
-      .then((r) => {
-        if (dead || r.ok) return;
-        const directIdx = first.candidates.findIndex((u) => !u.startsWith(PROXY));
-        if (directIdx > 0) {
-          rememberPosition();
-          setCi(directIdx);
-          flash("Proxy busy — starting on direct CDN");
-        }
-      })
-      .catch(() => undefined);
+    const relayIdx = first.candidates.findIndex((u) => u.startsWith("/api/relay"));
+    const proxyIdx = first.candidates.findIndex((u) => u.startsWith(PROXY));
+    const directIdx = first.candidates.findIndex(
+      (u) => !u.startsWith(PROXY) && !u.startsWith("/api/relay"),
+    );
+    const probe = (i: number) =>
+      fetch(first.candidates[i], { method: "HEAD" })
+        .then((r) => [i, r.ok] as [number, boolean])
+        .catch(() => [i, false] as [number, boolean]);
+    const checks: Promise<[number, boolean]>[] = [];
+    if (relayIdx >= 0) checks.push(probe(relayIdx));
+    if (proxyIdx >= 0) checks.push(probe(proxyIdx));
+    if (!checks.length) return;
+    Promise.all(checks).then((pairs) => {
+      if (dead) return;
+      const good = pairs.filter((p) => p[1]).map((p) => p[0]).sort((a, b) => a - b)[0];
+      const target = good !== undefined ? good : directIdx;
+      if (target > 0) {
+        rememberPosition();
+        setCi(target);
+        flash(good !== undefined ? "Starting on healthy lane" : "Lanes busy — trying direct CDN");
+      }
+    });
     return () => {
       dead = true;
     };
