@@ -182,9 +182,6 @@ export function Player({
     if (!first || first.candidates.length < 2) return;
     const relayIdx = first.candidates.findIndex((u) => u.startsWith("/api/relay"));
     const proxyIdx = first.candidates.findIndex((u) => u.startsWith(PROXY));
-    const directIdx = first.candidates.findIndex(
-      (u) => !u.startsWith(PROXY) && !u.startsWith("/api/relay"),
-    );
     const probe = (i: number) => {
       const u = first.candidates[i];
       // relay answers tiny ranged GETs; others get HEAD
@@ -202,11 +199,12 @@ export function Player({
     Promise.all(checks).then((pairs) => {
       if (dead) return;
       const good = pairs.filter((p) => p[1]).map((p) => p[0]).sort((a, b) => a - b)[0];
-      const target = good !== undefined ? good : directIdx;
-      if (target > 0) {
+      // healthy lane found -> skip straight to it; otherwise start at 0 so
+      // the ladder tries EVERY candidate in order (nothing gets skipped)
+      if (good !== undefined && good > 0) {
         rememberPosition();
-        setCi(target);
-        flash(good !== undefined ? "Starting on healthy lane" : "Lanes busy — trying direct CDN");
+        setCi(good);
+        flash("Starting on healthy lane");
       }
     });
     return () => {
