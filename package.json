@@ -20,11 +20,13 @@
     "tailwind-merge": "^3.3.0"
   },
   "devDependencies": {
+    "@sparticuz/chromium": "^149.0.0",
     "@tailwindcss/vite": "^4.1.8",
     "@types/react": "^19.1.6",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.5.1",
     "jsdom": "^30.0.1",
+    "puppeteer-core": "^25.9.0",
     "tailwindcss": "^4.1.8",
     "typescript": "~5.8.3",
     "vite": "^6.3.5"
