@@ -672,7 +672,7 @@ export function Player({
                     menu === "quality" ? "border-cyan/60 text-cyan" : "border-hairline-strong text-ink-dim hover:text-ink",
                   )}
                 >
-                  {source.resolution}p <IChevronD width={13} height={13} />
+                  {source.resolution ? `${source.resolution}p` : "Local"} <IChevronD width={13} height={13} />
                 </button>
                 <AnimatePresence>
                   {menu === "quality" && (
@@ -695,7 +695,7 @@ export function Player({
                           )}
                         >
                           <span>
-                            {s.resolution}p
+                            {s.resolution ? `${s.resolution}p` : "Local"}
                             <span className="ml-2 text-[10px] text-ink-faint">
                               {s.resolution >= 1080 ? "Full HD" : s.resolution >= 720 ? "HD" : "SD"}
                             </span>
@@ -781,7 +781,7 @@ export function Player({
           controls ? "opacity-100" : "opacity-0",
         )}
       >
-        {source.resolution}p · {qualityLabel}
+        {source.resolution ? `${source.resolution}p` : "Local"} · {qualityLabel}
       </div>
     </div>
   );

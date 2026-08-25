@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { getItemDetails, getMedia } from "../lib/api";
-import { addDownload, getResume, saveProgress } from "../lib/store";
+import { getResume, saveProgress } from "../lib/store";
+import { startManagedDownload } from "../lib/downloader";
+import { getBlob } from "../lib/files";
 import { useHead } from "../hooks/useHead";
 import { Player } from "../player/Player";
 import { Button, EmptyState, ErrorState } from "../components/ui";
@@ -67,7 +69,9 @@ export function WatchPage() {
   const startDownload = (i: number) => {
     const src = media.data?.sources[i];
     if (!src) return;
-    addDownload({
+    // in-app managed download: streams through the proven lane, saves to
+    // IndexedDB, tracks progress on the Downloads page. No new tabs.
+    startManagedDownload({
       id: `${subjectId}-${season}-${episode}-${src.resolution}`,
       title: isSeries ? `${title} S${season}E${episode}` : title,
       posterUrl: details.data?.item.poster?.url,
@@ -75,22 +79,50 @@ export function WatchPage() {
       sizeBytes: src.sizeBytes,
       streamUrl: src.streamUrl,
       downloadUrl: src.downloadUrl,
-      addedAt: Date.now(),
       subjectId,
       season: isSeries ? season : undefined,
       episode: isSeries ? episode : undefined,
     });
     setDownloaded(src.downloadUrl);
-    window.setTimeout(() => setDownloaded(null), 1500);
-    // trigger the actual attachment download in a new tab
-    const a = document.createElement("a");
-    a.href = src.downloadUrl;
-    a.target = "_blank";
-    a.rel = "noopener";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+    window.setTimeout(() => setDownloaded(null), 2500);
   };
+
+  /* ---------------- local (in-app downloaded) playback ---------------- */
+  const localId = sp.get("local");
+  const [localUrl, setLocalUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let dead = false;
+    let url: string | null = null;
+    if (!localId) {
+      setLocalUrl(null);
+      return;
+    }
+    getBlob(localId).then((b) => {
+      if (dead) return;
+      url = b ? URL.createObjectURL(b) : null;
+      setLocalUrl(url ?? ""); // "" = checked, nothing stored -> stream instead
+    });
+    return () => {
+      dead = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [localId]);
+  const localSources = useMemo(
+    () =>
+      localUrl
+        ? [
+            {
+              id: "local",
+              resolution: 0,
+              candidates: [localUrl],
+              streamUrl: localUrl,
+              downloadUrl: "",
+              format: "MP4",
+            },
+          ]
+        : null,
+    [localUrl],
+  );
 
   useEffect(() => {
     // hide page scroll feel while watching
@@ -108,13 +140,15 @@ export function WatchPage() {
   return (
     <main className="min-h-screen bg-black/60">
       <div className="mx-auto max-w-[1200px] px-0 pt-0 sm:px-6 sm:pt-20">
-        {media.isLoading || details.isLoading ? (
+        {localId && localUrl === null ? (
+          <div className="skeleton aspect-video w-full sm:rounded-2xl" />
+        ) : media.isLoading || details.isLoading ? (
           <div className="skeleton aspect-video w-full sm:rounded-2xl" />
         ) : media.isError ? (
           <div className="pt-24">
             <ErrorState onRetry={() => media.refetch()} />
           </div>
-        ) : !media.data?.hasResource ? (
+        ) : !localSources && !media.data?.hasResource ? (
           <div className="pt-24">
             <EmptyState
               title="This selection isn't available"
@@ -127,9 +161,9 @@ export function WatchPage() {
           </div>
         ) : (
           <Player
-            key={`${season}-${episode}`}
-            sources={media.data!.sources}
-            captions={media.data!.captions}
+            key={`${season}-${episode}-${localId ?? "remote"}`}
+            sources={localSources ?? media.data!.sources}
+            captions={localSources ? [] : media.data!.captions}
             title={title}
             episodeLabel={isSeries ? `S${season} · E${episode}` : undefined}
             resumeAt={resume?.t}
@@ -175,7 +209,7 @@ export function WatchPage() {
           </div>
 
           {/* quality / download table */}
-          {media.data && media.data.sources.length > 0 && (
+          {!localId && media.data && media.data.sources.length > 0 && (
             <div className="glass w-full rounded-2xl p-4 sm:w-auto">
               <div className="mb-2 font-display text-[10px] font-semibold tracking-[0.2em] text-ink-faint uppercase">
                 Download

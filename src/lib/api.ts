@@ -359,7 +359,11 @@ export async function getMedia(opts: {
       const relays = b.raw.length
         ? [toRelay(b.raw[0], "app"), toRelay(b.raw[0], "okhttp"), toRelay(b.raw[0], "exo")]
         : [];
+      // proxy-download is the PROVEN lane (delivers bytes reliably; the
+      // attachment header is ignored by <video>), so it leads the ladder.
+      const pdl = b.downloadUrl ?? (b.raw[0] ? toDownload(b.raw[0], title, `${b.resolution}p`) : "");
       const candidates = dedupe([
+        ...(pdl ? [pdl] : []),
         ...relays,
         ...b.proxied,
         ...proxiedRaws,

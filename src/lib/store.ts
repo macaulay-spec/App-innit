@@ -108,6 +108,12 @@ export function addDownload(entry: DownloadEntry) {
 export function removeDownload(id: string) {
   write(DL_KEY, getDownloads().filter((d) => d.id !== id));
 }
+export function updateDownload(id: string, patch: Partial<DownloadEntry>) {
+  write(
+    DL_KEY,
+    getDownloads().map((d) => (d.id === id ? { ...d, ...patch } : d)),
+  );
+}
 export function useDownloads(): DownloadEntry[] {
   useStoreVersion();
   return getDownloads();

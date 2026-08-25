@@ -130,4 +130,7 @@ export interface DownloadEntry {
   subjectId: string;
   season?: number;
   episode?: number;
+  status?: "active" | "done" | "error";
+  received?: number;
+  total?: number;
 }
