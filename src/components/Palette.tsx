@@ -44,7 +44,9 @@ export function Palette({ open, onClose }: { open: boolean; onClose: () => void 
     return (popular.data ?? []).map((w) => ({ word: w, kind: "search" as const }));
   }, [q, suggestions.data, popular.data]);
 
-  useEffect(() => setActive(0), [entries.length, q]);
+  useEffect(() => {
+    setActive(0);
+  }, [entries.length, q]);
 
   const go = (word: string) => {
     onClose();

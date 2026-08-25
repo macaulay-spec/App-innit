@@ -1,5 +1,12 @@
 /* Smoke test with STUBBED API so real data paths (hero, cards, player) execute. */
 import { JSDOM } from "jsdom";
+import { readdirSync } from "fs";
+
+const BUNDLE =
+  process.env.BUNDLE === "dist"
+    ? "../dist/assets/" + readdirSync(new URL("../dist/assets", import.meta.url)).find((f) => f.endsWith(".js") && !f.endsWith(".map"))
+    : "../.smoke/bundle.mjs";
+console.log("using bundle:", BUNDLE);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -112,6 +119,9 @@ for (const k of [
   "HTMLElement", "HTMLInputElement", "HTMLVideoElement", "HTMLMediaElement", "Element", "Node",
   "Event", "MouseEvent", "KeyboardEvent", "CustomEvent", "getComputedStyle",
   "requestAnimationFrame", "cancelAnimationFrame", "IntersectionObserver", "matchMedia", "ResizeObserver",
+  "MutationObserver", "MessageChannel", "MessagePort", "CustomEvent", "EventTarget", "HTMLAnchorElement",
+  "HTMLButtonElement", "HTMLDivElement", "HTMLSpanElement", "HTMLImageElement", "HTMLCanvasElement",
+  "DOMParser", "XMLSerializer", "AbortController", "AbortSignal",
 ]) {
   try {
     Object.defineProperty(globalThis, k, { value: w[k], configurable: true, writable: true });
@@ -139,7 +149,7 @@ console.error = (...args) => {
 
 const text = () => w.document.body.textContent.replace(/\s+/g, " ").trim();
 
-await import("../.smoke/bundle.mjs");
+await import(BUNDLE);
 await sleep(1000);
 console.log("== BOOT ==", "bodyLen:", w.document.body.innerHTML.length, "| text:", text().slice(0, 160));
 
