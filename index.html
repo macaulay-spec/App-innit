@@ -18,6 +18,45 @@
     <title>Jagflix — Watch movies & series</title>
   </head>
   <body>
+    <!-- Pre-React crash catcher: surfaces any JS error as a visible overlay,
+         even if the app bundle itself fails to boot. -->
+    <script>
+      (function () {
+        function showErr(msg) {
+          var d = document.getElementById("jf-debug");
+          if (!d) {
+            d = document.createElement("div");
+            d.id = "jf-debug";
+            d.style.cssText =
+              "position:fixed;left:8px;right:8px;bottom:8px;z-index:99999;background:#2a0a12;color:#ffb4c4;border:1px solid #f43f5e;border-radius:12px;padding:10px 12px;font:12px/1.5 monospace;white-space:pre-wrap;max-height:45vh;overflow:auto";
+            (document.body || document.documentElement).appendChild(d);
+          }
+          d.textContent = (d.textContent ? d.textContent + "\n" : "") + msg;
+        }
+        window.addEventListener(
+          "error",
+          function (e) {
+            showErr(
+              "JS error: " +
+                (e.message || "(no message)") +
+                (e.filename ? " @ " + String(e.filename).split("/").slice(-1)[0] + ":" + e.lineno : ""),
+            );
+          },
+          true,
+        );
+        window.addEventListener("unhandledrejection", function (e) {
+          var r = e.reason;
+          showErr("unhandled rejection: " + (r && r.message ? r.message : String(r)));
+        });
+        // boot watchdog: if React never mounts (splash still present), say so
+        setTimeout(function () {
+          if (document.getElementById("splash")) {
+            showErr("boot watchdog: React did not mount within 6s (bundle may have failed to load)");
+          }
+        }, 6000);
+        window.__jfShowErr = showErr;
+      })();
+    </script>
     <div id="root">
       <!-- Boot splash (mockup #1) — replaced when React mounts -->
       <style>

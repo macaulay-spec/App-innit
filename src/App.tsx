@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Component, useEffect, useState, type ReactNode } from "react";
 import { Route, Routes, useLocation } from "react-router";
 import { Navbar, MobileTabBar } from "./components/Navbar";
 import { Palette } from "./components/Palette";
@@ -8,6 +8,35 @@ import { TitlePage } from "./pages/Title";
 import { WatchPage } from "./pages/Watch";
 import { MyListPage } from "./pages/MyList";
 import { DownloadsPage } from "./pages/Downloads";
+
+class ErrorBoundary extends Component<{ children: ReactNode }, { error?: Error }> {
+  state: { error?: Error } = {};
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="grid min-h-[70vh] place-items-center px-6 pt-16">
+          <div className="glass max-w-lg rounded-2xl p-8 text-center">
+            <div className="font-serif text-2xl text-ink">Something broke</div>
+            <p className="mt-2 text-sm break-words text-ink-dim">{this.state.error.message}</p>
+            <button
+              onClick={() => {
+                this.setState({ error: undefined });
+                window.location.hash = "#/";
+              }}
+              className="bg-accent-gradient mt-5 cursor-pointer rounded-xl px-6 py-2.5 font-display text-sm font-semibold text-white"
+            >
+              Back home
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -33,6 +62,7 @@ export function App() {
 
   return (
     <div className="min-h-full">
+      <ErrorBoundary>
       <div className="aurora" aria-hidden>
         <i />
       </div>
@@ -54,6 +84,7 @@ export function App() {
 
       {!watching && <MobileTabBar />}
       <Palette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      </ErrorBoundary>
     </div>
   );
 }
