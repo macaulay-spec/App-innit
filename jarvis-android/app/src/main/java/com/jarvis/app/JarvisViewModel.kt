@@ -88,6 +88,13 @@ class JarvisViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { engine.clearNow() }
     }
 
+    private val _runtimeRequestTrigger = MutableStateFlow(0L)
+    val runtimeRequestTrigger = _runtimeRequestTrigger.asStateFlow()
+
+    fun requestAllRuntime() {
+        _runtimeRequestTrigger.value = System.currentTimeMillis()
+    }
+
     override fun onCleared() {
         speech.shutdown()
         super.onCleared()

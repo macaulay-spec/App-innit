@@ -1,27 +1,43 @@
 package com.jarvis.app.notifications
 
-import android.app.PendingIntent
-import android.app.RemoteInput
 import android.app.Notification
+import android.app.RemoteInput
 import android.content.Context
+import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
-import androidx.core.app.NotificationManagerCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class JarvisNotificationListener : NotificationListenerService() {
 
-    override fun onNotificationPosted(sbn: StatusBarNotification?) {
-        refresh()
+    companion object {
+        @Volatile var instance: JarvisNotificationListener? = null
+            private set
+
+        /** Best effort reply through a notification's RemoteInput action. */
+        fun replyViaNotification(packageName: String, replyText: String): Boolean {
+            val inst = instance ?: return false
+            return inst.sendReply(packageName, replyText)
+        }
     }
 
-    override fun onNotificationRemoved(sbn: StatusBarNotification?) {
-        refresh()
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
     }
 
     override fun onListenerConnected() {
+        instance = this
         refresh()
+    }
+
+    override fun onNotificationPosted(sbn: StatusBarNotification?) = refresh()
+    override fun onNotificationRemoved(sbn: StatusBarNotification?) = refresh()
+
+    override fun onDestroy() {
+        if (instance === this) instance = null
+        super.onDestroy()
     }
 
     private fun refresh() {
@@ -51,8 +67,21 @@ class JarvisNotificationListener : NotificationListenerService() {
         } catch (_: Exception) { }
     }
 
-    /** Best-effort: find a notification with a reply RemoteInput action for the given package. */
-    fun getReplyAction(packageName: String): Notification.Action? {
+    private fun sendReply(packageName: String, replyText: String): Boolean {
+        return try {
+            val action = findReplyAction(packageName) ?: return false
+            val inputs = action.getRemoteInputs() ?: return false
+            val results = Bundle()
+            results.putCharSequence(inputs.first().resultKey, replyText)
+            RemoteInput.addResultsToIntent(action.getRemoteInputs(), action.actionIntent, results)
+            action.actionIntent.send()
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun findReplyAction(packageName: String): Notification.Action? {
         val sbns = activeNotifications ?: return null
         for (sbn in sbns) {
             if (sbn.packageName != packageName) continue
@@ -62,25 +91,5 @@ class JarvisNotificationListener : NotificationListenerService() {
             }
         }
         return null
-    }
-
-    /** Sends a reply through the notification's RemoteInput action (works for some messaging apps). */
-    fun replyToNotification(packageName: String, text: String): Boolean {
-        val action = getReplyAction(packageName) ?: return false
-        val input = action.getRemoteInputs()?.firstOrNull() ?: return false
-        val intent = action.actionIntent
-        val results = RemoteInput.Builder(input.resultKey)
-            .addExtras(android.os.Bundle().apply { putCharSequence(input.resultKey, text) })
-            .build()
-        return try {
-            val wrapped = PendingIntent.getActivity(
-                this, input.resultKey.hashCode(),
-                intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            wrapped.send()
-            true
-        } catch (_: Exception) {
-            false
-        }
     }
 }

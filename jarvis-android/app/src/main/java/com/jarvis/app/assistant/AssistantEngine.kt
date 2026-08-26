@@ -3,9 +3,13 @@ package com.jarvis.app.assistant
 import android.content.Context
 import com.jarvis.app.accessibility.JarvisAccessibilityService
 import com.jarvis.app.memory.MemoryRepository
-import com.jarvis.app.notifications.JarvisNotification
+import com.jarvis.app.messaging.MessagingSender
 import com.jarvis.app.notifications.NotificationRepository
+import com.jarvis.app.tools.CalendarToolkit
+import com.jarvis.app.tools.ContactsToolkit
 import com.jarvis.app.tools.DeviceToolkit
+import com.jarvis.app.tools.FileAndCameraToolkit
+import com.jarvis.app.tools.LocationToolkit
 import com.jarvis.app.ui.JarvisState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -18,12 +22,20 @@ data class EngineResult(
 
 data class PendingSms(val phone: String?, val body: String)
 
+data class PendingAppMessage(val target: String?, val body: String, val phone: String? = null)
+
 class AssistantEngine(context: Context) {
 
     private val tools = DeviceToolkit(context)
+    private val location = LocationToolkit(context)
+    private val contacts = ContactsToolkit(context)
+    private val calendar = CalendarToolkit(context)
+    private val filesCam = FileAndCameraToolkit(context)
+    private val sender = MessagingSender(context)
     private val memory = MemoryRepository(com.jarvis.app.memory.AppDatabase.get(context))
     private val ai = AiGateway()
     val pendingSms = AtomicReference<PendingSms?>(null)
+    val pendingAppMsg = AtomicReference<PendingAppMessage?>(null)
 
     suspend fun respond(raw: String): EngineResult {
         val result = process(raw)
@@ -136,15 +148,52 @@ class AssistantEngine(context: Context) {
             )
         }
 
+        // ---- Location / contacts / calendar / files / camera ----
+        if (lower.contains("where am i") || lower.contains("location") || lower.contains("where are we")) {
+            return@withContext EngineResult(location.lastKnown())
+        }
+        if (lower.startsWith("call ") || lower.contains("call john") || lower.contains("call adam") ||
+            lower.contains("phone ") && lower.contains("contact") ||
+            lower.contains("number") && (lower.contains("john") || lower.contains("mom") || lower.contains("dad"))
+        ) {
+            val name = Regex("(?:call|number for|look up|find) ([a-z]+)").find(lower)?.groupValues?.get(1)
+                ?: if (lower.contains("john")) "john" else "the contact"
+            val contact = contacts.search(name)
+            return@withContext if (contact == null) {
+                EngineResult("I couldn't find a contact for $name.")
+            } else {
+                contacts.dial(contact.phone)
+                EngineResult("Calling ${contact.name} (${contact.phone}).", JarvisState.EXECUTING)
+            }
+        }
+        if (lower.startsWith("add event ") || lower.startsWith("add to calendar ") || lower.startsWith("create event ") ||
+            lower.startsWith("schedule ") || lower.startsWith("remind me to ")
+        ) {
+            val title = text.substringAfter("event ").substringAfter("calendar ").substringAfter("to ").trim()
+            return@withContext EngineResult(calendar.createEvent(title.ifBlank { "New event" }), JarvisState.EXECUTING)
+        }
+        if (lower.contains("open file") || lower.contains("open a file") || lower.contains("open files") ||
+            lower.contains("my files") || lower.contains("show files")
+        ) {
+            filesCam.openFilePicker()
+            return@withContext EngineResult("Opened the file picker. Choose a file and I can work with it.", JarvisState.EXECUTING)
+        }
+        if (lower.contains("take a picture") || lower.contains("take a photo") || lower.contains("open camera") ||
+            lower.contains("take photo")
+        ) {
+            filesCam.openCamera()
+            return@withContext EngineResult("Opened the camera.", JarvisState.EXECUTING)
+        }
+
         // ---- Reply draft + send ----
-        if (lower.startsWith("reply") || lower.contains("tell ") || lower.contains("message ")) {
+        if (lower.startsWith("reply") || lower.contains("tell ") || lower.contains("message ") || lower.contains("send to ")) {
             val body = extractReplyBody(text) ?: return@withContext EngineResult("What should I send?")
             val target = findTarget(text)
-            val notif = if (target != null)
-                NotificationRepository.byApp(target).firstOrNull()
+            val notif = if (target != null) NotificationRepository.byApp(target).firstOrNull()
             else NotificationRepository.latest()
-            val phone = notif?.title
+            val phone = notif?.title?.takeIf { it.contains(Regex("\\d")) }
             pendingSms.set(PendingSms(phone, body))
+            pendingAppMsg.set(PendingAppMessage(target, body, phone))
             return@withContext EngineResult(
                 "Draft ready for ${target ?: notif?.appLabel ?: "the app"}: \"$body\". Say 'send' to confirm."
             )
@@ -152,11 +201,14 @@ class AssistantEngine(context: Context) {
         if (lower.trim() == "send" || lower.trim() == "send it" || lower.trim() == "send now" ||
             lower.contains("yes send")
         ) {
-            val draft = pendingSms.getAndSet(null) ?: return@withContext EngineResult(
-                "There's no draft ready yet."
-            )
+            val appDraft = pendingAppMsg.getAndSet(null)
+            val smsDraft = pendingSms.getAndSet(null)
+            if (appDraft != null && appDraft.target != null) {
+                val ok = sender.sendReply(appDraft.target, appDraft.body)
+                return@withContext EngineResult(ok, if (ok.startsWith("Sent") || ok.contains("Opened")) JarvisState.EXECUTING else JarvisState.SUCCESS)
+            }
+            val draft = smsDraft ?: return@withContext EngineResult("There's no draft ready yet.")
             if (draft.phone.isNullOrBlank()) {
-                // No phone number resolved -> open SMS app with prefilled body
                 tools.openSmsApp(null, draft.body)
                 return@withContext EngineResult("Opened SMS composer with your message. Tap send there.", JarvisState.EXECUTING)
             }
@@ -165,6 +217,7 @@ class AssistantEngine(context: Context) {
         }
         if (lower == "cancel" || lower.contains("cancel the draft") || lower.contains("cancel draft")) {
             pendingSms.set(null)
+            pendingAppMsg.set(null)
             return@withContext EngineResult("Draft cancelled.")
         }
 
@@ -190,9 +243,11 @@ class AssistantEngine(context: Context) {
 
         if (lower.contains("help") || lower.contains("what can you do")) {
             return@withContext EngineResult(
-                "I can open apps, check battery/storage/network, control media, volume, brightness, DND, flashlight, " +
-                    "read & reply to notifications, send SMS, remember/forget things. Try: \"open WhatsApp\", " +
-                    "\"any messages?\", \"reply to John, say hi\", \"remember my mom's number\", \"what do you remember about me?\"."
+                "I can open apps, check battery/storage/network, find your location, look up contacts, call people, " +
+                    "add calendar events, control media/volume/brightness/DND/flashlight, read & reply to notifications, " +
+                    "send in WhatsApp/Telegram/SMS, open files, take photos, and remember/forget things. Try: " +
+                    "\"open WhatsApp\", \"any messages?\", \"reply to John, say hi\", \"where am I\", \"add event gym\", " +
+                    "\"call john\", \"remember my mom's number\", \"what do you remember about me?\"."
             )
         }
 

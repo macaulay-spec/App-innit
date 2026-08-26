@@ -1,8 +1,6 @@
 package com.jarvis.app.ui
 
-import android.content.Intent
-import android.os.Build
-import android.provider.Settings
+import com.jarvis.app.permission.PermissionsCore
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -214,30 +212,54 @@ private fun MemoryScreen(memories: List<MemoryEntity>) {
 private fun SettingsScreen(viewModel: JarvisViewModel) {
     val context = LocalContext.current
     Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Text("Settings", color = MaterialTheme.colorScheme.primary, fontSize = 20.sp)
+        Text("Settings & Permissions", color = MaterialTheme.colorScheme.primary, fontSize = 20.sp)
         Spacer(Modifier.height(12.dp))
-        VerticalCard("Listening") {
+
+        VerticalCard("Listening service") {
             Text("Tap the mic FAB to start/stop the foreground listening service.", color = MaterialTheme.colorScheme.onBackground)
         }
-        VerticalCard("Notification access (read & reply)") {
-            Text("Enable 'JARVIS' in Android notification access settings.", color = MaterialTheme.colorScheme.onBackground)
-            Button(onClick = { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }) {
-                Text("Open notification access")
+
+        VerticalCard("🔓 Request all runtime permissions") {
+            Text("Mic, SMS, contacts, calendar, camera, photos, location, calls, sensors.",
+                color = MaterialTheme.colorScheme.onBackground)
+            Button(onClick = { viewModel.requestAllRuntime() }) { Text("Request all") }
+        }
+
+        VerticalCard("📬 Notification access — read & reply to messages") {
+            Text(if (PermissionsCore.notificationAccessEnabled(context)) "● Enabled" else "○ Not enabled",
+                color = if (PermissionsCore.notificationAccessEnabled(context)) Color(0xFF50FF9C) else MaterialTheme.colorScheme.error)
+            Button(onClick = { PermissionsCore.openNotificationSettings(context) }) { Text("Open notification access") }
+        }
+
+        VerticalCard("👁 Full mode — accessibility (screen read + type + tap)") {
+            Text(if (PermissionsCore.accessibilityEnabled()) "● Enabled" else "○ Not enabled",
+                color = if (PermissionsCore.accessibilityEnabled()) Color(0xFF50FF9C) else MaterialTheme.colorScheme.error)
+            Button(onClick = { PermissionsCore.openAccessibilitySettings(context) }) { Text("Open accessibility settings") }
+        }
+
+        VerticalCard("🪟 Overlay + system settings") {
+            Text("Overlay: ${if (PermissionsCore.overlayEnabled(context)) "enabled" else "not enabled"} · Write Settings: ${if (PermissionsCore.writeSettingsEnabled(context)) "enabled" else "not enabled"}")
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Button(onClick = { PermissionsCore.openOverlaySettings(context) }) { Text("Overlay") }
+                Button(onClick = { PermissionsCore.openWriteSettings(context) }) { Text("Write settings") }
             }
         }
-        VerticalCard("Full mode (screen control)") {
-            Text("Enable 'JARVIS' in Android accessibility settings. Off by default.", color = MaterialTheme.colorScheme.onBackground)
-            Button(onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) {
-                Text("Open accessibility settings")
+
+        VerticalCard("📊 Usage stats + battery") {
+            Text("Usage: ${if (PermissionsCore.usageAccessEnabled(context)) "enabled" else "not enabled"} · Battery: ${if (PermissionsCore.isIgnoringBatteryOptimizations(context)) "unrestricted" else "optimized"}")
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Button(onClick = { PermissionsCore.openUsageSettings(context) }) { Text("Usage") }
+                Button(onClick = { PermissionsCore.openBatteryExemption(context) }) { Text("Battery") }
             }
         }
-        VerticalCard("Battery optimization") {
-            Button(onClick = {
-                context.startActivity(
-                    Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-                )
-            }) { Text("Open battery settings") }
+
+        VerticalCard("📍 Location + storage + sensors") {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Button(onClick = { PermissionsCore.openLocationSettings(context) }) { Text("Location") }
+                Button(onClick = { PermissionsCore.openManageStorage(context) }) { Text("Files") }
+            }
         }
+
         VerticalCard("Memory") {
             Button(onClick = { viewModel.wipeMemory() }) { Text("Wipe all memory") }
         }

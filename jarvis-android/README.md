@@ -9,18 +9,43 @@ read the screen and tap/type inside other apps.
 
 ## What it does right now
 
-- **Cinematic 3D core** (Compose canvas): IDLE / WAKING / LISTENING / PROCESSING / SPEAKING /
-  EXECUTING / SUCCESS / ERROR / OFFLINE visual states.
-- **Voice layer:** foreground microphone service + persistent notification, device STT
-  (speech recognition) that looks for the wake phrase, and TextToSpeech replies.
-- **Read + reply to notifications** via the Notification Listener.
-- **Send SMS** (with confirmation) and open SMS composer with pre-filled body.
-- **Open apps** by name (fuzzy), battery, storage, connectivity/Wi‑Fi, volume, brightness,
-  DND, flashlight, media controls.
+- **Voice-first input:** foreground microphone service + notification, device STT
+  (speech recognition) wake phrase, TTS replies. Text input too.
+- **Read + reply to messages anywhere**: SMS (full), WhatsApp / Telegram / Instagram via
+  Notification reply first, then Accessibility screen typing, then deep-link/open draft.
+- **Full device control:** open apps (fuzzy), battery, storage, connectivity/Wi‑Fi,
+  volume, brightness, DND, flashlight, media, back/home, notification shade.
+- **Location:** "where am I" via GPS/network/Geocoder.
+- **Contacts:** look up, call via dialer, open chat.
+- **Calendar:** create events.
+- **Files & camera:** open the system file picker (SAF), open camera.
 - **Memory:** remember, forget, recall, full wipe (Room + local DB).
-- **Full mode:** Accessibility service (OFF by default) to read screen text, tap text,
-  type into fields, press back/home, go to notification shade.
-- **Honest help** command listing what it can do.
+- **Full mode:** Accessibility service (OFF by default) to read screen, tap,
+  type into fields, press back/home.
+- **Permissions dashboard** in Settings: request all runtime permissions and open every
+  special Settings page (notification access, accessibility, overlay, write-settings,
+  usage stats, battery exemptions, location, files, install unknown apps).
+
+## Permissions this app can request
+
+The manifest declares the maximum an Android app can get, including:
+
+- Voice: `RECORD_AUDIO`, `FOREGROUND_SERVICE_MICROPHONE`
+- Messages: `SEND_SMS`, `RECEIVE_SMS`, `READ_SMS`, `READ_CONTACTS`, notification-listener
+- Full mode: accessibility service, `SYSTEM_ALERT_WINDOW`, `WRITE_SETTINGS`,
+  `PACKAGE_USAGE_STATS`, `QUERY_ALL_PACKAGES`, `SCHEDULE_EXACT_ALARM`
+- Location: `ACCESS_FINE_LOCATION`, `ACCESS_COARSE_LOCATION`, `ACCESS_BACKGROUND_LOCATION`
+- Calendar/contacts: read/write calendar, read/write contacts
+- Media/files: camera, read media (image/video/audio), manage external storage
+- Calls: `CALL_PHONE`, `READ_PHONE_STATE`, `READ_PHONE_NUMBERS`, `READ_CALL_LOG`,
+  `WRITE_CALL_LOG`, `ANSWER_PHONE_CALLS`
+- Sensors/activity: `BODY_SENSORS`, `ACTIVITY_RECOGNITION`
+- Connectivity: Wi-Fi state/change, Bluetooth, NFC, internet
+- Other: `BATTERY_STATS`, `VIBRATE`, `WAKE_LOCK`, biometric
+
+Some of these (usage stats, overlay, write-settings, install unknown apps, battery
+exemption, accessibility, notification access) can't be granted with a runtime dialog —
+they open their respective Settings page, and the Settings screen has buttons for each.
 
 ---
 
