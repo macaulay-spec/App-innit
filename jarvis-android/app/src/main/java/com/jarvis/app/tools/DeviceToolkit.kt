@@ -160,6 +160,28 @@ class DeviceToolkit(private val context: Context) {
         context.startActivity(intent)
     }
 
+    /** Opens the default browser (Chrome if available) with the search query. */
+    fun openSearch(query: String): Boolean {
+        return try {
+            val url = "https://www.google.com/search?q=${android.net.Uri.encode(query)}"
+            val browserIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            // Prefer Chrome if installed.
+            val chrome = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                `package` = "com.android.chrome"
+            }
+            if (chrome.resolveActivity(context.packageManager) != null) {
+                context.startActivity(chrome)
+            } else {
+                context.startActivity(browserIntent)
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     fun sendSms(phone: String, body: String): String {
         return try {
             if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.SEND_SMS)

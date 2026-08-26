@@ -91,6 +91,23 @@ class AssistantEngine(context: Context) {
         }
 
         // ---- Device / system ----
+        // "search for X" / "google X" / "open chrome and search for book"
+        if (lower.contains("search for ") || lower.contains("search ") && lower.contains(" chrome") ||
+            lower.startsWith("google ") || lower.contains("go to google")
+        ) {
+            val q = when {
+                lower.contains("search for ") -> text.substringAfter("search for ").trim()
+                lower.contains("search ") && lower.contains("chrome") ->
+                    text.substringAfter("search ").removePrefix("for ").dropWhile { it.isWhitespace() }.trim()
+                else -> text.substringAfter("google ").trim()
+            }
+            val query = q.removePrefix("for ").trim()
+            val ok = if (query.isNotBlank()) tools.openSearch(query) else tools.fuzzyLaunch("chrome")
+            return@withContext EngineResult(
+                if (ok) "Searching $query in your browser…" else "Couldn't open a search.",
+                if (ok) JarvisState.EXECUTING else JarvisState.ERROR
+            )
+        }
         if (lower.startsWith("open ") || lower.startsWith("launch ")) {
             val q = text.substringAfter(" ").trim()
             val ok = tools.fuzzyLaunch(q)
