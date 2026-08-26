@@ -36,9 +36,14 @@
         window.addEventListener(
           "error",
           function (e) {
+            // ignore resource load errors (img/video/link) and empty noise;
+            // only surface genuine script errors, deduped, capped
+            if (e.target && e.target !== window) return;
+            var msg = e.message || "";
+            if (!msg || msg === "Script error.") return;
             showErr(
               "JS error: " +
-                (e.message || "(no message)") +
+                msg +
                 (e.filename ? " @ " + String(e.filename).split("/").slice(-1)[0] + ":" + e.lineno : ""),
             );
           },

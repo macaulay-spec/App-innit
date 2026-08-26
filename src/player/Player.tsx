@@ -106,6 +106,48 @@ export function Player({
   const attempts = useRef<string[]>([]);
   const loadTimer = useRef<number>(0);
   const [copied, setCopied] = useState(false);
+  const [diag, setDiag] = useState<string[]>([]);
+
+  /* Forensic probes run once when everything fails: relay identities read
+     the CDN's real status same-origin; the download lane's CORS
+     readability; direct CDN reachability. Ends all guessing. */
+  const runDiag = () => {
+    const raw = sources[0]?.rawUrl;
+    const pdl = sources[0]?.candidates.find((u) => u.startsWith(PROXY_DOWNLOAD));
+    setDiag([]);
+    const push = (s: string) => setDiag((d) => [...d, s]);
+    (async () => {
+      if (raw) {
+        for (const hs of ["web", "app", "okhttp"]) {
+          try {
+            const r = await fetch(`/api/relay?url=${encodeURIComponent(raw)}&hs=${hs}`, {
+              headers: { range: "bytes=0-1" },
+            });
+            push(`relay ${hs}: http ${r.status}, cdn said ${r.headers.get("x-upstream-status") ?? "?"}`);
+          } catch (e: any) {
+            push(`relay ${hs}: ERR ${e?.message ?? e}`);
+          }
+        }
+      } else push("relay: (no raw url available)");
+      if (pdl) {
+        try {
+          const r = await fetch(pdl, { headers: { range: "bytes=0-99" } });
+          const b = await r.arrayBuffer();
+          push(`zst-download: http ${r.status}, cors ${r.type}, got ${b.byteLength} bytes`);
+        } catch (e: any) {
+          push(`zst-download: ERR ${e?.message ?? e} (CORS blocked?)`);
+        }
+      }
+      if (raw) {
+        try {
+          const r = await fetch(raw, { mode: "no-cors" });
+          push(`direct cdn: ${r.type} (opaque = responded, basic = refused)`);
+        } catch (e: any) {
+          push(`direct cdn: ERR ${e?.message ?? e}`);
+        }
+      }
+    })();
+  };
 
   const source = sources[si];
   const url = source ? (source.candidates[ci] ?? source.streamUrl) : "";
@@ -188,6 +230,7 @@ export function Player({
         return;
       }
       setFailed(true);
+      runDiag();
     },
     [sources, si, ci, flash, onRefreshMedia],
   );
@@ -506,9 +549,10 @@ export function Player({
             <p className="mt-1 text-sm text-ink-dim">
               Every lane was tried. The CDN re-signs URLs every few minutes — retry often recovers.
             </p>
-            {attempts.current.length > 0 && (
-              <pre className="mt-4 max-h-40 overflow-y-auto rounded-xl bg-black/50 p-3 text-left text-[11px] leading-relaxed text-ink-dim">
+            {(attempts.current.length > 0 || diag.length > 0) && (
+              <pre className="mt-4 max-h-44 overflow-y-auto rounded-xl bg-black/50 p-3 text-left text-[11px] leading-relaxed whitespace-pre-wrap text-ink-dim">
                 {attempts.current.join("\n")}
+                {diag.length > 0 ? "\n-- probes --\n" + diag.join("\n") : "\nprobing…"}
               </pre>
             )}
             <div className="mt-4 flex items-center justify-center gap-2">
@@ -524,6 +568,8 @@ export function Player({
                     `Jagflix playback report ${new Date().toISOString()}`,
                     `title: ${title} ${episodeLabel ?? ""}`,
                     ...attempts.current,
+                    "-- probes --",
+                    ...diag,
                   ].join("\n");
                   navigator.clipboard
                     ?.writeText(report)

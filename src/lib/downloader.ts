@@ -20,8 +20,24 @@ export async function startManagedDownload(
   const ctrl = new AbortController();
   controllers.set(id, ctrl);
   try {
-    const res = await fetch(entry.downloadUrl, { signal: ctrl.signal });
-    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+    // try each url in order: our relay first, proven lanes as fallback
+    const urls = [entry.downloadUrl, entry.streamUrl].filter(
+      (u, i, a) => u && a.indexOf(u) === i,
+    );
+    let res: Response | null = null;
+    for (const u of urls) {
+      try {
+        const r = await fetch(u, { signal: ctrl.signal });
+        if (r.ok && r.body) {
+          res = r;
+          break;
+        }
+      } catch {
+        /* try next */
+      }
+    }
+    if (!res) throw new Error("all download urls failed");
+    if (!res.body) throw new Error("no body");
     const total = Number(res.headers.get("content-length")) || entry.sizeBytes || 0;
     const reader = res.body.getReader();
     const chunks: BlobPart[] = [];
