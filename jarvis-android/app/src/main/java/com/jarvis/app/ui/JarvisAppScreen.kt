@@ -260,6 +260,13 @@ private fun SettingsScreen(viewModel: JarvisViewModel) {
             }
         }
 
+        VerticalCard("📷 Camera + files (quick)") {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Button(onClick = { viewModel.launchCamera() }) { Text("Take photo") }
+                Button(onClick = { viewModel.launchFilePicker() }) { Text("Pick file") }
+            }
+        }
+
         VerticalCard("Memory") {
             Button(onClick = { viewModel.wipeMemory() }) { Text("Wipe all memory") }
         }

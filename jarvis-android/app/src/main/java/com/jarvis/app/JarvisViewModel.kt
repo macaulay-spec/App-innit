@@ -42,6 +42,9 @@ class JarvisViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             memoryRepo.all().collect { _memories.value = it }
         }
+
+        engine.onCaptureRequested = { launchCamera() }
+        engine.onPickRequested = { launchFilePicker() }
     }
 
     fun setInput(v: String) { _input.value = v }
@@ -91,8 +94,41 @@ class JarvisViewModel(app: Application) : AndroidViewModel(app) {
     private val _runtimeRequestTrigger = MutableStateFlow(0L)
     val runtimeRequestTrigger = _runtimeRequestTrigger.asStateFlow()
 
+    private val _captureIntent = MutableStateFlow(0L)
+    val captureIntent = _captureIntent.asStateFlow()
+
+    private val _pickIntent = MutableStateFlow(0L)
+    val pickIntent = _pickIntent.asStateFlow()
+
     fun requestAllRuntime() {
         _runtimeRequestTrigger.value = System.currentTimeMillis()
+    }
+
+    fun launchCamera() { _captureIntent.value = System.currentTimeMillis() }
+    fun launchFilePicker() { _pickIntent.value = System.currentTimeMillis() }
+
+    fun onCameraImage(uri: android.net.Uri?) {
+        viewModelScope.launch {
+            if (uri != null) {
+                val bmp = com.jarvis.app.tools.ImageUtils.fromUri(getApplication(), uri)
+                val analysis = com.jarvis.app.tools.ImageAnalyzer.analyze(bmp ?: return@launch)
+                val desc = com.jarvis.app.tools.ImageAnalyzer.describe(analysis)
+                _lines.value = _lines.value + ChatLine("jarvis", desc)
+                _state.value = com.jarvis.app.ui.JarvisState.SUCCESS
+                speech.speak(desc)
+            }
+        }
+    }
+
+    fun onFilePicked(uri: android.net.Uri?) {
+        viewModelScope.launch {
+            if (uri != null) {
+                val summary = engine.summarizeFile(uri)
+                _lines.value = _lines.value + ChatLine("jarvis", summary)
+                _state.value = com.jarvis.app.ui.JarvisState.SUCCESS
+                speech.speak(summary)
+            }
+        }
     }
 
     override fun onCleared() {

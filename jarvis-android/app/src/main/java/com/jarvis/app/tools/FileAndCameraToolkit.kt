@@ -7,7 +7,9 @@ import android.provider.MediaStore
 
 class FileAndCameraToolkit(private val context: Context) {
 
-    /** Opens the system SAF file picker. User picks a file; JARVIS gets its URI and can summarize. */
+    /** Opens the system SAF file picker. User picks a file; JARVIS gets its URI. */
+    private var pendingFileUri: Uri? = null
+
     fun openFilePicker() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
             addCategory(Intent.CATEGORY_OPENABLE)
@@ -17,12 +19,26 @@ class FileAndCameraToolkit(private val context: Context) {
         try { context.startActivity(intent) } catch (_: Exception) { }
     }
 
-    /** Opens the system camera app to capture a photo. */
+    fun onFilePicked(uri: Uri?) { pendingFileUri = uri }
+    fun pendingFile(): Uri? = pendingFileUri
+    fun clearPendingFile() { pendingFileUri = null }
+
     fun openCamera() {
         val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         try { context.startActivity(intent) } catch (_: Exception) { }
+    }
+
+    /** Returns a human summary of the file (name + type + text if readable). */
+    fun summarizeFile(uri: Uri): String {
+        val name = DocumentReader.displayName(context, uri)
+        val text = DocumentReader.readText(context, uri)
+        return if (text.isNotBlank()) {
+            "File: $name\n---\n${text.take(1200)}"
+        } else {
+            "Selected: $name. I can open this type, but text extraction isn't wired in yet."
+        }
     }
 
     fun openManageStorage() {

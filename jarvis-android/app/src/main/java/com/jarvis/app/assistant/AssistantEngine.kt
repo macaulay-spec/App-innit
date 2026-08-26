@@ -26,6 +26,7 @@ data class PendingAppMessage(val target: String?, val body: String, val phone: S
 
 class AssistantEngine(context: Context) {
 
+    private val localContext = context.applicationContext
     private val tools = DeviceToolkit(context)
     private val location = LocationToolkit(context)
     private val contacts = ContactsToolkit(context)
@@ -36,6 +37,12 @@ class AssistantEngine(context: Context) {
     private val ai = AiGateway()
     val pendingSms = AtomicReference<PendingSms?>(null)
     val pendingAppMsg = AtomicReference<PendingAppMessage?>(null)
+
+    // Callbacks wired from the UI layer so the engine can request camera/file picker.
+    var onCaptureRequested: (() -> Unit)? = null
+    var onPickRequested: (() -> Unit)? = null
+
+    fun summarizeFile(uri: android.net.Uri): String = filesCam.summarizeFile(uri)
 
     suspend fun respond(raw: String): EngineResult {
         val result = process(raw)
@@ -173,16 +180,26 @@ class AssistantEngine(context: Context) {
             return@withContext EngineResult(calendar.createEvent(title.ifBlank { "New event" }), JarvisState.EXECUTING)
         }
         if (lower.contains("open file") || lower.contains("open a file") || lower.contains("open files") ||
-            lower.contains("my files") || lower.contains("show files")
+            lower.contains("my files") || lower.contains("show files") || lower.contains("pick a file")
         ) {
-            filesCam.openFilePicker()
-            return@withContext EngineResult("Opened the file picker. Choose a file and I can work with it.", JarvisState.EXECUTING)
+            onPickRequested()
+            return@withContext EngineResult("Opening file picker…", JarvisState.EXECUTING)
         }
         if (lower.contains("take a picture") || lower.contains("take a photo") || lower.contains("open camera") ||
-            lower.contains("take photo")
+            lower.contains("take photo") || lower.contains("capture")
         ) {
-            filesCam.openCamera()
-            return@withContext EngineResult("Opened the camera.", JarvisState.EXECUTING)
+            onCaptureRequested()
+            return@withContext EngineResult("Opening camera…", JarvisState.EXECUTING)
+        }
+        if (lower.contains("describe") && lower.contains("photo") || lower.contains("describe the image") ||
+            lower.contains("what is in the photo")
+        ) {
+            val uri = com.jarvis.app.tools.CaptureBus.get()
+            val bmp = uri?.let { com.jarvis.app.tools.ImageUtils.fromUri(localContext, it) }
+            val analysis = com.jarvis.app.tools.ImageAnalyzer.analyze(bmp ?: return@withContext EngineResult(
+                "No photo captured yet. Say 'take a picture' first."
+            ))
+            return@withContext EngineResult(com.jarvis.app.tools.ImageAnalyzer.describe(analysis))
         }
 
         // ---- Reply draft + send ----
