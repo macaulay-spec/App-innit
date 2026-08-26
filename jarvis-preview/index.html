@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>JARVIS — Core Preview</title>
+<style>
+  :root { --bg:#05070d; --panel:#0a1322; --text:#d8f4ff; --muted:#6f8ba0; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+    font-family:'Segoe UI', system-ui, sans-serif; display:flex; min-height:100vh; }
+  #app { width:100%; max-width:1100px; margin:0 auto; padding:24px; display:grid;
+    grid-template-columns:1fr 320px; gap:24px; }
+  #stage { position:relative; aspect-ratio:1/1; max-height:78vh; background:
+    radial-gradient(circle at 50% 50%, rgba(53,224,255,.08), transparent 60%);
+    border:1px solid rgba(53,224,255,.14); border-radius:24px; overflow:hidden;
+    box-shadow:0 0 80px rgba(53,224,255,.08) inset; }
+  canvas { width:100%; height:100%; display:block; }
+  #stateLabel { position:absolute; top:18px; left:50%; transform:translateX(-50%);
+    font-size:13px; letter-spacing:3px; text-transform:uppercase; opacity:.8; }
+  #panel { background:var(--panel); border:1px solid rgba(53,224,255,.14);
+    border-radius:24px; padding:20px; align-self:start; }
+  #panel h1 { font-size:18px; margin:0 0 6px; color:#35e0ff; letter-spacing:2px; }
+  #panel p { color:var(--muted); font-size:13px; margin:0 0 16px; }
+  .grp { margin-bottom:10px; }
+  .btn { border:1px solid rgba(53,224,255,.3); background:transparent; color:var(--text);
+    padding:8px 10px; border-radius:10px; font-size:12px; cursor:pointer;
+    margin:3px; transition:.15s; }
+  .btn:hover,.btn.active { background:rgba(53,224,255,.18); border-color:#35e0ff; }
+  .slide { width:100%; accent-color:#35e0ff; margin:10px 0; }
+  #chat { height:150px; overflow-y:auto; background:rgba(0,0,0,.25); border-radius:12px;
+    padding:10px; font-size:13px; }
+  #chat div { margin:4px 0; }
+  #chat .you { color:#9ff4ff; }
+  #chat .jar { color:#35e0ff; }
+  #ask { width:100%; margin-top:10px; background:#0a2e45; color:var(--text);
+    border:1px solid rgba(53,224,255,.3); padding:10px; border-radius:12px; }
+  #ask:focus { outline:1px solid #35e0ff; }
+  @media (max-width:760px){ #app{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="stateLabel">IDLE</div>
+  </div>
+  <div id="panel">
+    <h1>JARVIS CORE</h1>
+    <p>Interactive preview of the cinematic 3D interface running in the Android app.</p>
+    <div class="grp">
+      <button class="btn active" data-s="IDLE">IDLE</button>
+      <button class="btn" data-s="WAKING">WAKING</button>
+      <button class="btn" data-s="LISTENING">LISTENING</button>
+      <button class="btn" data-s="PROCESSING">PROCESSING</button>
+      <button class="btn" data-s="SPEAKING">SPEAKING</button>
+      <button class="btn" data-s="EXECUTING">EXECUTING</button>
+      <button class="btn" data-s="SUCCESS">SUCCESS</button>
+      <button class="btn" data-s="ERROR">ERROR</button>
+      <button class="btn" data-s="OFFLINE">OFFLINE</button>
+    </div>
+    <div class="grp">
+      <label style="font-size:12px;color:var(--muted)">Audio level (listening / speaking)</label>
+      <input id="audio" class="slide" type="range" min="0" max="100" value="0" />
+    </div>
+    <div id="chat"><div class="jar">Tap a state to see the core react. Type a command to test the flow.</div></div>
+    <input id="ask" placeholder="Try: open WhatsApp / any messages? / battery / remember …" />
+  </div>
+</div>
+<script>
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+let W,H, cx, cy, t = 0;
+let state = 'IDLE';
+let audio = 0;
+const labelEl = document.getElementById('stateLabel');
+const audioEl = document.getElementById('audio');
+audioEl.addEventListener('input', e => audio = +e.target.value/100);
+
+const COLORS = {
+  IDLE:'#35e0ff', WAKING:'#5cebff', LISTENING:'#4fffb0',
+  PROCESSING:'#7a8cff', SPEAKING:'#6bffe1', EXECUTING:'#ffb13b',
+  SUCCESS:'#50ff9c', ERROR:'#ff4d6d', OFFLINE:'#ffb13b'
+};
+
+function hex(hex, a=1){ 
+  const n = parseInt(hex.slice(1),16);
+  return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`;
+}
+
+function resize(){ 
+  const dpr = devicePixelRatio||1; const r = cv.getBoundingClientRect();
+  cv.width = r.width*dpr; cv.height = r.height*dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
+  W = r.width; H = r.height; cx = W/2; cy = H/2;
+}
+addEventListener('resize', resize); resize();
+
+function draw(){
+  req = requestAnimationFrame(draw); t += 0.016;
+  const c = COLORS[state];
+  const breathe = state==='IDLE' ? .86 + Math.sin(t*1.2)*.06 : state==='OFFLINE' ? .72 + Math.sin(t*1.0)*.04 : .96 + Math.sin(t*2.4)*.05;
+  const base = Math.min(W,H)*.20 * breathe;
+  const vibe = state==='LISTENING'||state==='SPEAKING' ? audio*.5 : 0;
+
+  // background glow
+  const g = ctx.createRadialGradient(cx,cy,0,cx,cy,Math.max(W,H)*.6);
+  g.addColorStop(0, hex(c,.10+vibe*.15)); g.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+
+  // outer haze
+  ctx.fillStyle = hex(c, .16+vibe*.4);
+  ctx.beginPath(); ctx.arc(cx,cy,base*1.7,0,7); ctx.fill();
+
+  // orbital rings (rotated ellipses)
+  ctx.save(); ctx.translate(cx,cy); ctx.rotate(t*.08);
+  ctx.strokeStyle = hex(c,.5); ctx.lineWidth = base*.035;
+  ctx.beginPath(); ctx.ellipse(0,0,base*1.65,base*.55,0,0,7); ctx.stroke();
+  ctx.strokeStyle = hex(c,.2); ctx.lineWidth = base*.02;
+  ctx.beginPath(); ctx.ellipse(0,0,base*1.95,base*.75,0,0,7); ctx.stroke();
+  ctx.restore();
+  ctx.save(); ctx.translate(cx,cy); ctx.rotate(-t*.06);
+  ctx.strokeStyle = hex(c,.35); ctx.lineWidth = base*.025;
+  ctx.beginPath(); ctx.ellipse(0,0,base*.55,base*1.75,0,0,7); ctx.stroke();
+  ctx.restore();
+
+  // inner shells
+  ctx.fillStyle = hex(c,.9);  ctx.beginPath(); ctx.arc(cx,cy,base*.52,0,7); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,.9)'; ctx.beginPath(); ctx.arc(cx,cy,base*.30,0,7); ctx.fill();
+  ctx.fillStyle = '#051626'; ctx.beginPath(); ctx.arc(cx,cy,base*.24,0,7); ctx.fill();
+  ctx.fillStyle = hex(c,.95); ctx.beginPath(); ctx.arc(cx,cy,base*.12,0,7); ctx.fill();
+
+  // reactive ring for listening/speaking
+  if(state==='LISTENING'||state==='SPEAKING'){
+    ctx.strokeStyle = hex(c,.6); ctx.lineWidth = base*(.05+vibe*.12);
+    ctx.beginPath(); ctx.arc(cx,cy,base*(1.35+vibe),0,7); ctx.stroke();
+  }
+
+  // particles
+  const n = state==='PROCESSING' ? 42 : 22;
+  for(let i=0;i<n;i++){
+    const a = i*2.3999 + t*.5;
+    const d = base*(1.4+(i%5)*.16) + vibe*20;
+    const px = cx + Math.cos(a)*d, py = cy + Math.sin(a)*d;
+    ctx.fillStyle = hex(c,.55); ctx.beginPath(); ctx.arc(px,py,1.2+(i%3)*.7,0,7); ctx.fill();
+  }
+
+  // status ring
+  ctx.strokeStyle = hex(c,.25+vibe*.5); ctx.lineWidth=2;
+  ctx.beginPath(); ctx.arc(cx,cy,base*1.2,0,7); ctx.stroke();
+}
+
+let req; draw();
+
+// state buttons
+document.querySelectorAll('.btn').forEach(b=>{
+  b.onclick = ()=>{ 
+    document.querySelectorAll('.btn').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active'); setState(b.dataset.s);
+  };
+});
+function setState(s){ state=s; labelEl.textContent=s; labelEl.style.color=COLORS[s]; }
+
+// simple local demo engine (mirrors the Android local fallback)
+const chat = document.getElementById('chat');
+const ask = document.getElementById('ask');
+function say(who,text){ const d=document.createElement('div'); d.className=who; d.textContent=(who==='you'?'You: ':'JARVIS: ')+text; chat.appendChild(d); chat.scrollTop=chat.scrollHeight; }
+function handle(q){
+  say('you', q); const l=q.toLowerCase();
+  setState('PROCESSING');
+  setTimeout(()=>{
+    let reply='';
+    if(l.startsWith('open ')||l.startsWith('launch ')){ reply='Opening '+q.split(' ').pop()+'.'; setState('EXECUTING'); }
+    else if(l.includes('any messages')){ reply='You have 1 new message from John.'; setState('SUCCESS'); }
+    else if(l.includes('battery')){ reply='Battery is 76% and not charging.'; setState('SUCCESS'); }
+    else if(l.includes('remember')){ reply="Got it. I'll remember: "+q.replace(/remember\s+(that\s+)?/i,''); setState('SUCCESS'); }
+    else if(l.includes('reply')){ reply='Draft ready. Say "send" to confirm.'; setState('EXECUTING'); }
+    else if(l.trim()==='send'){ reply='Sent. ✅'; setState('SUCCESS'); }
+    else { reply='Got it. You said: "'+q+'". I also remember our last exchange.'; setState('SUCCESS'); }
+    say('jar', reply);
+    setTimeout(()=> setState('IDLE'), 2500);
+  }, 500);
+}
+ask.addEventListener('keydown', e=>{ if(e.key==='Enter'){ handle(ask.value); ask.value=''; } });
+</script>
+</body>
+</html>
